@@ -8,11 +8,21 @@
 #include <vector>
 #include <thread>
 #include <cmath>
+#include <atomic>
 
 using namespace std;
 using namespace std::chrono;
 
 class LU {
+
+	uint32_t numThreads;
+	atomic<unsigned long> threadCounter{};
+	atomic<unsigned long> eventCounter;
+
+	int worker_count;
+	std::vector<std::thread> thread_list;
+    std::vector<atomic<bool>> thread_readynnes;
+
 	public:
 
         ulong K;
@@ -21,6 +31,14 @@ class LU {
         int step_height = 0;
         int I = 0;
         int J = 0;
+
+		explicit LU(const uint32_t &numThreads) : numThreads(numThreads), eventCounter(0), threadCounter(0) {
+			// spawn threads
+			worker_count = thread::hardware_concurrency() - 1;
+			for (int i = 0; i < worker_count; ++i) {
+				thread_list.push_back(std::thread(&LU::a_block, this));
+			}
+		}
 
 		// It reads a matrix from the binary file.
 		void readMatrixFromInputFile(const string& inputFile)	{
@@ -58,61 +76,79 @@ class LU {
      * @param I start i index
      * @param J start j index
      */
-    void a_block() { // work
-        int localI = I;
+    void a_block() {
+		// fetch initial barier state
+		unsigned long barierState = eventCounter.load();
+
+		// fetch arguments
+		int localI = I;
         int localJ = J;
+
         for (int i = localI; i < localI + step_height; i++) {
             for (int j = localJ; j < localJ + step_width; j++) {
                 A[i][j] = A[i][j] - L[i][k] * U[k][j];
             }
         }
-    }
+
+
+		// increment number of threads fetched by barier
+		threadCounter++;
+
+		// wait for bariere release
+		while (eventCounter.load() == barierState) {
+			this_thread::sleep_for(chrono::milliseconds(1));
+		}
+	}
 
 
     double decompose()	{
-			high_resolution_clock::time_point start = high_resolution_clock::now();
+		high_resolution_clock::time_point start = high_resolution_clock::now();
 
-            K = A.size();
+		K = A.size();
 
-			int worker_count = thread::hardware_concurrency();
-			cout << "Worker count = " << worker_count << endl;
+		for (k = 0; k < K; k++) {
+			// barier->wait()
+			while (threadCounter.load() != numThreads) {
+				this_thread::sleep_for(chrono::milliseconds(1)); // wait
+			}
 
-            for (k = 0; k < K; k++) {
+			U[k][k] = A[k][k];
 
-                U[k][k] = A[k][k];
+			std::thread t1(&LU::u_row, this);
+			std::thread t2(&LU::l_col, this);
 
-                std::thread t1(&LU::u_row, this);
-                std::thread t2(&LU::l_col, this);
+			t1.join();
+			t2.join();
 
-                t1.join();
-                t2.join();
+			// release barier
+			threadCounter = 0;
+			eventCounter++;
 
-                std::vector<std::thread> thread_list;
-                int step = ceil(((A.size() - k) / std::sqrt(worker_count)));
-                for (int localI = k + 1; localI < K; localI += step) {
-                    for (int localJ = k + 1; localJ < K; localJ += step) {
-                        step_width = localJ + step > K ? K - localJ : step;
-                        step_height = localI + step > K? K - localI : step;
+			// recount A
+			// fixme run threads
+			int step = ceil(((A.size() - k) / std::sqrt(worker_count)));
+            int threadIndex = 0;
+			for (int localI = k + 1; localI < K; localI += step) {
+				for (int localJ = k + 1; localJ < K; localJ += step) {
+					step_width = localJ + step > K ? K - localJ : step;
+					step_height = localI + step > K? K - localI : step;
 
-                        I = localI; // fixme kritická sekce
-                        J = localJ; // fixme kritická sekce
-                        thread_list.push_back(std::thread(&LU::a_block, this));
-                    }
-                }
+					I = localI; // fixme kritická sekce
+					J = localJ; // fixme kritická sekce
 
-                // todo barier
-                for (int i = 0; i < thread_list.size(); i++) {
-                    thread_list[i].join();
-                }
-                thread_list.clear();
+					// todo release one thread
+                    thread_list[threadIndex++];
+				}
+			}
 
-            }
+            // queue.size == 3
 
-
-			double runtime = duration_cast<duration<double>>(high_resolution_clock::now()-start).count();
-
-			return runtime;
 		}
+
+		double runtime = duration_cast<duration<double>>(high_resolution_clock::now()-start).count();
+
+		return runtime;
+	}
 
 		void writeResults(const string& outputFile)	{
 			ofstream bout(outputFile.c_str(), ofstream::out | ofstream::binary | ofstream::trunc);
