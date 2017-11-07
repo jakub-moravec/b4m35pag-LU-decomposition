@@ -14,6 +14,14 @@ using namespace std::chrono;
 
 class LU {
 	public:
+
+        ulong K;
+        int k = 0;
+        int step_width = 0;
+        int step_height = 0;
+        int I = 0;
+        int J = 0;
+
 		// It reads a matrix from the binary file.
 		void readMatrixFromInputFile(const string& inputFile)	{
 			ifstream bin(inputFile.c_str(), ifstream::in | ifstream::binary);
@@ -31,23 +39,31 @@ class LU {
 			bin.close();
 		}
 
-    void u_row(int length, int k, int chunk) { // work
-        for (int j = k + 1; j < length; j++) {
+    void u_row() {
+        for (int j = k + 1; j < K; j++) {
             U[k][j] = A[k][j];
         }
     }
 
-    void l_col(int length, int k, int chunk) { // work
+    void l_col() {
         L[k][k] = 1;
-        for (int i = k + 1; i < length; i++) {
+        for (int i = k + 1; i < K; i++) {
             L[i][k] = A[i][k] / U[k][k];
         }
     }
 
-    void a_block(int k, int start_row, int start_col, int width, int height) { // work
-        for (int m = start_row; m < start_row + height ; m++) {
-            for (int n = start_col; n < start_col + width ; n++) {
-                A[m][n] = A[m][n] - L[m][k] * U[k][n];
+    /**
+     *
+     * @param k
+     * @param I start i index
+     * @param J start j index
+     */
+    void a_block() { // work
+        int localI = I;
+        int localJ = J;
+        for (int i = localI; i < localI + step_height; i++) {
+            for (int j = localJ; j < localJ + step_width; j++) {
+                A[i][j] = A[i][j] - L[i][k] * U[k][j];
             }
         }
     }
@@ -55,53 +71,36 @@ class LU {
 
     double decompose()	{
 			high_resolution_clock::time_point start = high_resolution_clock::now();
-			// TODO: Implement a parallel LU decomposition...
-//            for(int k = 0; k < A.size(); ++k) {
-//
-//                for (int j = k; j < A.size(); ++j) {
-//                    U[k][j] = A[k][j];
-//                }
-//                L[k][k] = 1;
-//
-//                for (int i = k + 1; i < A.size(); ++i) {
-//                    L[i][k] = A[i][k] / U[k][k];
-//                }
-//
-//                for (int j = k + 1; j < A.size(); ++j) {
-//                    for (int i = k +1; i < A.size(); ++i) {
-//                        A[i][j] -= L[i][k] * U[k][j];
-//                    }
-//                }
-//			}
-			// paralel
-            int K = A.size();
+
+            K = A.size();
+
 			int worker_count = thread::hardware_concurrency();
 			cout << "Worker count = " << worker_count << endl;
-            for (int k = 0; k < K; k++) {
+
+            for (k = 0; k < K; k++) {
+
                 U[k][k] = A[k][k];
 
-                std::thread t1(&LU::u_row, this, K, k, 0);
-                std::thread t2(&LU::l_col, this, K, k, 0);
+                std::thread t1(&LU::u_row, this);
+                std::thread t2(&LU::l_col, this);
 
                 t1.join();
                 t2.join();
 
                 std::vector<std::thread> thread_list;
                 int step = ceil(((A.size() - k) / std::sqrt(worker_count)));
-                for (int a = k + 1; a < K; a += step) {
-                    for (int b = k + 1; b < K; b += step) {
-                        int tmp_width = step;
-                        int tmp_height = step;
-                        if (a + step > K) {
-                            tmp_height = K - a;
-                        }
-                        if (b + step > K) {
-                            tmp_width = K - b;
-                        }
-                        thread_list.push_back(std::thread(&LU::a_block, this, k, a, b, tmp_width, tmp_height));
+                for (int localI = k + 1; localI < K; localI += step) {
+                    for (int localJ = k + 1; localJ < K; localJ += step) {
+                        step_width = localJ + step > K ? K - localJ : step;
+                        step_height = localI + step > K? K - localI : step;
+
+                        I = localI; // fixme kritická sekce
+                        J = localJ; // fixme kritická sekce
+                        thread_list.push_back(std::thread(&LU::a_block, this));
                     }
                 }
 
+                // todo barier
                 for (int i = 0; i < thread_list.size(); i++) {
                     thread_list[i].join();
                 }
