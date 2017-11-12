@@ -18,6 +18,7 @@ class LU {
 	atomic<unsigned long> numberOfFinishedThreads{};
 	atomic<unsigned long> numberOfSpawnedThreads{};
     atomic<bool> parametersReaded{};
+    atomic<bool> programEnd{};
 
 	int worker_count;
 	std::vector<std::thread> thread_list;
@@ -35,10 +36,11 @@ class LU {
 
 		explicit LU() {
 			// spawn threads
-			worker_count = thread::hardware_concurrency();
+			worker_count = thread::hardware_concurrency() - 1;
             numberOfFinishedThreads = worker_count;
             numberOfSpawnedThreads = 0;
             parametersReaded = true;
+            programEnd = false;
 		}
 
 		// It reads a matrix from the binary file.
@@ -99,6 +101,10 @@ class LU {
 
             // wait for bariere release
             while (!thread_readynnes[localThreadIndex]) {
+                // end thread
+                if(programEnd.load()) {
+                    return;
+                }
                 this_thread::sleep_for(chrono::milliseconds(1));
             }
         } while (k < K - 1);
@@ -166,7 +172,11 @@ class LU {
 			}
 		}
 
-        // todo join all threads
+        // join all threads
+        programEnd = true;
+        for (int i = 0; i < thread_list.size(); ++i) {
+            thread_list[i].join();
+        }
 
 		double runtime = duration_cast<duration<double>>(high_resolution_clock::now()-start).count();
 
