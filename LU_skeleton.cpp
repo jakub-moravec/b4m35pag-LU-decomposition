@@ -15,29 +15,30 @@ using namespace std::chrono;
 
 class LU {
 
-	uint32_t numThreads;
-	atomic<unsigned long> threadCounter{};
-	atomic<unsigned long> eventCounter;
+	atomic<unsigned long> numberOfFinishedThreads{};
+	atomic<unsigned long> numberOfSpawnedThreads{};
+    atomic<bool> parametersReaded{};
 
 	int worker_count;
 	std::vector<std::thread> thread_list;
-    std::vector<atomic<bool>> thread_readynnes;
+    std::vector<bool> thread_readynnes;
 
 	public:
 
-        ulong K;
+        ulong K = 0;
         int k = 0;
-        int step_width = 0;
-        int step_height = 0;
+        double step_width = 0;
+        double step_height = 0;
         int I = 0;
         int J = 0;
+        int threadIndex = 0;
 
-		explicit LU(const uint32_t &numThreads) : numThreads(numThreads), eventCounter(0), threadCounter(0) {
+		explicit LU() {
 			// spawn threads
-			worker_count = thread::hardware_concurrency() - 1;
-			for (int i = 0; i < worker_count; ++i) {
-				thread_list.push_back(std::thread(&LU::a_block, this));
-			}
+			worker_count = thread::hardware_concurrency();
+            numberOfFinishedThreads = worker_count;
+            numberOfSpawnedThreads = 0;
+            parametersReaded = true;
 		}
 
 		// It reads a matrix from the binary file.
@@ -70,34 +71,37 @@ class LU {
         }
     }
 
-    /**
-     *
-     * @param k
-     * @param I start i index
-     * @param J start j index
-     */
     void a_block() {
-		// fetch initial barier state
-		unsigned long barierState = eventCounter.load();
+        do {
+            // fetch arguments
+            int localI = I;
+            int localJ = J;
+            double local_step_widht = step_width;
+            double local_step_height = step_height;
+            int localThreadIndex = threadIndex;
 
-		// fetch arguments
-		int localI = I;
-        int localJ = J;
+            parametersReaded = true;
 
-        for (int i = localI; i < localI + step_height; i++) {
-            for (int j = localJ; j < localJ + step_width; j++) {
-                A[i][j] = A[i][j] - L[i][k] * U[k][j];
+//            cout << "A thread: I: " << localI << ", J: " << localJ << ", T: " << localThreadIndex  << "\n";
+
+            // lock thread
+            thread_readynnes[localThreadIndex] = false;
+
+            for (int i = localI; i < localI + local_step_height; i++) {
+                for (int j = localJ; j < localJ + local_step_widht; j++) {
+                    A[i][j] = A[i][j] - L[i][k] * U[k][j];
+                }
             }
-        }
 
 
-		// increment number of threads fetched by barier
-		threadCounter++;
+            // increment number of threads fetched by barier
+            numberOfFinishedThreads++;
 
-		// wait for bariere release
-		while (eventCounter.load() == barierState) {
-			this_thread::sleep_for(chrono::milliseconds(1));
-		}
+            // wait for bariere release
+            while (!thread_readynnes[localThreadIndex]) {
+                this_thread::sleep_for(chrono::milliseconds(1));
+            }
+        } while (k < K - 1);
 	}
 
 
@@ -107,9 +111,11 @@ class LU {
 		K = A.size();
 
 		for (k = 0; k < K; k++) {
+
 			// barier->wait()
-			while (threadCounter.load() != numThreads) {
+			while (numberOfFinishedThreads.load() < numberOfSpawnedThreads.load()) {
 				this_thread::sleep_for(chrono::milliseconds(1)); // wait
+                numberOfSpawnedThreads = 0;
 			}
 
 			U[k][k] = A[k][k];
@@ -121,29 +127,46 @@ class LU {
 			t2.join();
 
 			// release barier
-			threadCounter = 0;
-			eventCounter++;
+			numberOfFinishedThreads = 0;
 
 			// recount A
-			// fixme run threads
-			int step = ceil(((A.size() - k) / std::sqrt(worker_count)));
-            int threadIndex = 0;
+			double step = ceil(((A.size() - k) / std::sqrt(worker_count)));
+            int localThreadIndex = 0;
 			for (int localI = k + 1; localI < K; localI += step) {
 				for (int localJ = k + 1; localJ < K; localJ += step) {
-					step_width = localJ + step > K ? K - localJ : step;
-					step_height = localI + step > K? K - localI : step;
+					double local_step_width = localJ + step > K ? K - localJ : step;
+					double local_step_height = localI + step > K ? K - localI : step;
 
-					I = localI; // fixme kritická sekce
-					J = localJ; // fixme kritická sekce
 
-					// todo release one thread
-                    thread_list[threadIndex++];
+                    // kritická sekce // FIXME slow here
+                    parametersReaded = false;
+					I = localI;
+					J = localJ;
+                    step_width = local_step_width;
+                    step_height = local_step_height;
+					threadIndex = localThreadIndex;
+
+                    if (k == 0) {
+                        // spawn thread if needed
+                        thread_readynnes.push_back(true);
+                        thread_list.emplace_back(&LU::a_block, this);
+                        ++numberOfSpawnedThreads;
+                    } else {
+                        // release one thread
+                        thread_readynnes[localThreadIndex] = true;
+                        ++numberOfSpawnedThreads;
+                    }
+
+                    while (!parametersReaded.load()) {
+                        this_thread::sleep_for(chrono::milliseconds(1)); // wait
+                    }
+
+                    localThreadIndex++;
 				}
 			}
-
-            // queue.size == 3
-
 		}
+
+        // todo join all threads
 
 		double runtime = duration_cast<duration<double>>(high_resolution_clock::now()-start).count();
 

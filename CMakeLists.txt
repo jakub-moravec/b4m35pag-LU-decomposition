@@ -14,6 +14,6 @@ set(CMAKE_CXX_STANDARD 11)
 #However, the file(GLOB...) allows for wildcard additions:
 file(GLOB SOURCES "*.cpp")
 
-add_executable(lu ${SOURCES} barier.cpp barier.h)
+add_executable(lu ${SOURCES})
 
 target_link_libraries(lu ${CMAKE_THREAD_LIBS_INIT})
