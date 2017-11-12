@@ -53,6 +53,8 @@ class LU {
 				L = U = A;
 				for (uint64_t r = 0; r < n; ++r)
 					bin.read((char*) A[r].data(), n*sizeof(double));
+
+                AA = A;
 			} else {
 				throw invalid_argument("Cannot open the input file!");
 			}
@@ -78,7 +80,7 @@ class LU {
             // fetch arguments
 			struct parameter par = parameters[thread_index];
 
-            cout << "A thread: I: " << par.i << ", J: " << par.j << ", T: " << thread_index << "\n";
+            cout << "T: " << thread_index << ", K: " << par.k << ", I: " << par.i << ", J: " << par.j << ", W: " << par.stepWidth << ", H: " << par.stepHeight << "\n";
 
             // lock thread
             thread_readynnes[thread_index] = false;
@@ -101,7 +103,8 @@ class LU {
                 }
                 this_thread::sleep_for(chrono::milliseconds(1));
             }
-        } while (!programEnd.load()); // fixme par.k < K
+
+        } while (!programEnd.load());
 	}
 //TODO remove - Pavluv check code
 	bool checkResult(){
@@ -114,8 +117,8 @@ class LU {
 					sum += L[i][k] * U[k][j];
 				}
 
-				if(!double_equals(sum, A[i][j])){
-					cout << "Result of L*U " << sum << " should be " << A[i][j] << endl;
+				if(!double_equals(sum, AA[i][j])){
+//					cout << "Result of L*U [" << i <<", " << j << "] "   << sum << " should be " << AA[i][j] << endl;
 					correct = false;
 				}
 			}
@@ -175,7 +178,7 @@ class LU {
                         ++numberOfSpawnedThreads;
                     } else {
                         // release one thread
-						parameters[localThreadIndex] = par;
+                        parameters[localThreadIndex] = par;
                         thread_readynnes[localThreadIndex] = true;
                         ++numberOfSpawnedThreads;
                     }
@@ -213,7 +216,7 @@ class LU {
 		
 	private:
 
-		vector<vector<double>> A, L, U;
+		vector<vector<double>> A, L, U, AA; // FIXME remove AA
 		friend ostream& operator<<(ostream&, const LU&);
 };
 
@@ -228,6 +231,8 @@ ostream& operator<<(ostream& out, const LU& lu)	{
 		}
 	};
 
+    out<<"Matrix AA:"<<endl;
+    printMatrix(lu.AA);
 	out<<"Matrix A:"<<endl;
 	printMatrix(lu.A);
 	out<<endl<<"Lower matrix:"<<endl;
