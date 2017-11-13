@@ -21,90 +21,93 @@ class LU {
 	} ;
 
 	atomic<unsigned long> numberOfFinishedThreads{};
-	atomic<int> runThread{};
-    atomic<bool> programEnd{};
+	atomic<bool> programEnd{};
 
-    unsigned long worker_count;
+	unsigned long worker_count;
 	std::vector<std::thread> thread_list;
+	std::vector<bool> thread_stopped;
 	std::vector<parameter> parameters;
 
-	public:
+public:
 
-        ulong K = 0;
+	ulong K = 0;
 
-		explicit LU() {
-			// spawn threads
-			worker_count = thread::hardware_concurrency();
-            numberOfFinishedThreads = worker_count;
-            runThread = -1;
-            programEnd = false;
+	explicit LU() {
+		// spawn threads
+		worker_count = thread::hardware_concurrency();
+		numberOfFinishedThreads = worker_count;
+		programEnd = false;
 
-            for (int i = 0; i < worker_count; ++i) {
-                struct parameter dummy_par;
-                parameters.push_back(dummy_par);
-                thread_list.emplace_back(&LU::a_block, this, i);
-            }
+		for (int i = 0; i < worker_count; ++i) {
+			thread_stopped.push_back(true);
+			struct parameter dummy_par;
+			parameters.push_back(dummy_par);
+			thread_list.emplace_back(&LU::a_block, this, i);
+		}
+	}
+
+	// It reads a matrix from the binary file.
+	void readMatrixFromInputFile(const string& inputFile)	{
+		ifstream bin(inputFile.c_str(), ifstream::in | ifstream::binary);
+		if (bin)	{
+			uint64_t n = 0;
+			bin.read((char*) &n, sizeof(uint64_t));
+			A.resize(n, vector<double>(n, 0.0));
+			L = U = A;
+			for (uint64_t r = 0; r < n; ++r)
+				bin.read((char*) A[r].data(), n*sizeof(double));
+
+			AA = A;
+		} else {
+			throw invalid_argument("Cannot open the input file!");
 		}
 
-		// It reads a matrix from the binary file.
-		void readMatrixFromInputFile(const string& inputFile)	{
-			ifstream bin(inputFile.c_str(), ifstream::in | ifstream::binary);
-			if (bin)	{
-				uint64_t n = 0;
-				bin.read((char*) &n, sizeof(uint64_t));
-				A.resize(n, vector<double>(n, 0.0));
-				L = U = A;
-				for (uint64_t r = 0; r < n; ++r)
-					bin.read((char*) A[r].data(), n*sizeof(double));
+		bin.close();
+	}
 
-                AA = A;
-			} else {
-				throw invalid_argument("Cannot open the input file!");
+	void u_row(int k) {
+		for (int j = k + 1; j < K; j++) {
+			U[k][j] = A[k][j];
+		}
+	}
+
+	void l_col(int k) {
+		L[k][k] = 1;
+		for (int i = k + 1; i < K; i++) {
+			L[i][k] = A[i][k] / U[k][k];
+		}
+	}
+
+	void a_block(int thread_index) {
+		do {
+			// wait for bariere release
+			while (thread_stopped[thread_index]) {
+				// end thread
+				if(programEnd.load()) {
+					return;
+				}
+				this_thread::sleep_for(chrono::milliseconds(1));
 			}
 
-			bin.close();
-		}
-
-    void u_row(int k) {
-        for (int j = k + 1; j < K; j++) {
-            U[k][j] = A[k][j];
-        }
-    }
-
-    void l_col(int k) {
-        L[k][k] = 1;
-        for (int i = k + 1; i < K; i++) {
-            L[i][k] = A[i][k] / U[k][k];
-        }
-    }
-
-    void a_block(int thread_index) {
-        do {
-            // wait for bariere release
-            while (thread_index > runThread) {
-                // end thread
-                if(programEnd.load()) {
-                    return;
-                }
-                this_thread::sleep_for(chrono::milliseconds(1));
-            }
-
-            // fetch arguments
+			// fetch arguments
 			struct parameter par = parameters[thread_index];
 
 //            cout << "T: " << thread_index << ", K: " << par.k << ", I: " << par.i  << ", H: " << par.stepHeight << "\n";
 
-            for (int i = par.i; i < par.i + par.stepHeight; i++) {
-                for (int j = par.k + 1; j < K; j++) {
-                    A[i][j] = A[i][j] - L[i][par.k] * U[par.k][j];
-                }
-            }
+			// lock thread
+			thread_stopped[thread_index] = true;
+
+			for (int i = par.i; i < par.i + par.stepHeight; i++) {
+				for (int j = par.k + 1; j < K; j++) {
+					A[i][j] = A[i][j] - L[i][par.k] * U[par.k][j];
+				}
+			}
 
 
-            // increment number of threads fetched by barier
-            numberOfFinishedThreads++;
+			// increment number of threads fetched by barier
+			numberOfFinishedThreads++;
 
-        } while (!programEnd.load());
+		} while (!programEnd.load());
 	}
 //TODO remove - Pavluv check code
 	bool checkResult(){
@@ -140,9 +143,8 @@ class LU {
 		for (int k = 0; k < K; k++) {
 
 			// barier->wait()
-            while (numberOfFinishedThreads < worker_count) {
-                this_thread::sleep_for(chrono::milliseconds(1));
-            }
+			while (numberOfFinishedThreads < worker_count) {
+			}
 
 			U[k][k] = A[k][k];
 
@@ -152,31 +154,30 @@ class LU {
 			t1.join();
 			t2.join();
 
-            // recount A
+			// recount A
 			double step = ceil((A.size() - k) / (double) worker_count);
-            int localThreadIndex = 0;
-            for (int i = k + 1; i < K; i += step) {
-                // předání argumentu vláknu
-                struct parameter par;
-                par.i = i;
-                par.k = k;
-                par.stepHeight = i + step > K ? K - i : step;
-                parameters[localThreadIndex] = par;
+			int localThreadIndex = 0;
+			for (int i = k + 1; i < K; i += step) {
+				// předání argumentu vláknu
+				struct parameter par;
+				par.i = i;
+				par.k = k;
+				par.stepHeight = i + step > K ? K - i : step;
+				parameters[localThreadIndex] = par;
 
-                // release one thread
-                ++runThread;
-                --numberOfFinishedThreads;
+				// release one thread
+				thread_stopped[localThreadIndex] = false;
+				--numberOfFinishedThreads;
 
-                localThreadIndex++;
+				localThreadIndex++;
 			}
-            runThread = -1;
-        }
+		}
 
-        // join all threads
-        programEnd = true;
-        for (int i = 0; i < thread_list.size(); ++i) {
-            thread_list[i].join();
-        }
+		// join all threads
+		programEnd = true;
+		for (int i = 0; i < thread_list.size(); ++i) {
+			thread_list[i].join();
+		}
 
 		double runtime = duration_cast<duration<double>>(high_resolution_clock::now()-start).count();
 
@@ -197,11 +198,11 @@ class LU {
 
 		bout.close();
 	}
-		
-	private:
 
-		vector<vector<double>> A, L, U, AA; // FIXME remove AA
-		friend ostream& operator<<(ostream&, const LU&);
+private:
+
+	vector<vector<double>> A, L, U, AA; // FIXME remove AA
+	friend ostream& operator<<(ostream&, const LU&);
 };
 
 // Print the matrices A, L, and U in an instance of LU class.
@@ -215,8 +216,8 @@ ostream& operator<<(ostream& out, const LU& lu)	{
 		}
 	};
 
-    out<<"Matrix AA:"<<endl;
-    printMatrix(lu.AA);
+	out<<"Matrix AA:"<<endl;
+	printMatrix(lu.AA);
 	out<<"Matrix A:"<<endl;
 	printMatrix(lu.A);
 	out<<endl<<"Lower matrix:"<<endl;
