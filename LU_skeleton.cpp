@@ -34,7 +34,7 @@ public:
 
 	explicit LU() {
 		// spawn threads
-		worker_count = thread::hardware_concurrency() - 1;
+		worker_count = thread::hardware_concurrency();
 		numberOfFinishedThreads = worker_count;
         barierState = 0;
 		programEnd = false;
@@ -56,8 +56,6 @@ public:
 			L = U = A;
 			for (uint64_t r = 0; r < n; ++r)
 				bin.read((char*) A[r].data(), n*sizeof(double));
-
-			AA = A;
 		} else {
 			throw invalid_argument("Cannot open the input file!");
 		}
@@ -67,7 +65,7 @@ public:
 
 	void u_row(int k) {
 		for (int j = k + 1; j < K; j++) {
-			U[k][j] = A[k][j];
+			U[j][k] = A[k][j];
 		}
 	}
 
@@ -99,7 +97,7 @@ public:
 
 			for (int i = par.i; i < par.i + par.stepHeight; i++) {
 				for (int j = par.k + 1; j < K; j++) {
-					A[i][j] = A[i][j] - L[i][par.k] * U[par.k][j];
+					A[i][j] = A[i][j] - L[i][par.k] * U[j][par.k];
 				}
 			}
 
@@ -169,48 +167,28 @@ public:
 		return runtime;
 	}
 
-	void writeResults(const string& outputFile)	{
-		ofstream bout(outputFile.c_str(), ofstream::out | ofstream::binary | ofstream::trunc);
-		if (bout)	{
-			uint64_t n = A.size();
-			for (uint64_t r = 0; r < n; ++r)
-				bout.write((char*) L[r].data(), n*sizeof(double));
-			for (uint64_t r = 0; r < n; ++r)
-				bout.write((char*) U[r].data(), n*sizeof(double));
-		} else {
-			throw invalid_argument("Cannot open the input file!");
-		}
-
-		bout.close();
-	}
-
-    bool checkResult(){
-        uint64_t n = A.size();
-        bool correct = true;
-        for (int i = 0; i < n; ++i) {
-            for (int j = 0; j < n; ++j) {
-                double sum = 0;
-                for (int k = 0; k < n; ++k) {
-                    sum += L[i][k] * U[k][j];
+    void writeResults2(const string& outputFile)	{
+        ofstream bout(outputFile.c_str(), ofstream::out | ofstream::binary | ofstream::trunc);
+        if (bout)	{
+            uint64_t n = A.size();
+            for (uint64_t r = 0; r < n; ++r)
+                bout.write((char*) L[r].data(), n*sizeof(double));
+            for (uint64_t r = 0; r < n; ++r) {
+                std::vector<double> column(n);
+                for (uint64_t q = 0; q < n; ++q) {
+                    column[q] = U[q][r];
                 }
-
-                if(!double_equals(sum, AA[i][j])){
-                    cout << "Result of L*U [" << i <<", " << j << "] "   << sum << " should be " << AA[i][j] << endl;
-                    correct = false;
-                }
+                bout.write((char *) column.data(), n * sizeof(double));
             }
+        } else {
+            throw invalid_argument("Cannot open the input file!");
         }
-        return correct;
-    }
 
-    bool double_equals(double a, double b, double epsilon = 0.001)
-    {
-        return std::fabs(a - b) < epsilon;
+        bout.close();
     }
 
 private:
-
-	vector<vector<double>> A, L, U, AA; // FIXME remove AA
+	vector<vector<double>> A, L, U;
 	friend ostream& operator<<(ostream&, const LU&);
 };
 
@@ -225,8 +203,6 @@ ostream& operator<<(ostream& out, const LU& lu)	{
 		}
 	};
 
-	out<<"Matrix AA:"<<endl;
-	printMatrix(lu.AA);
 	out<<"Matrix A:"<<endl;
 	printMatrix(lu.A);
 	out<<endl<<"Lower matrix:"<<endl;
@@ -256,13 +232,9 @@ int main(int argc, char* argv[])	{
 	if (outputFile.empty())
 		cout<<lu<<endl;
 	else
-		lu.writeResults(outputFile);
+		lu.writeResults2(outputFile);
 
 	cout<<"computational time: "<<totalDuration<<" s"<<endl;
-	//remove for prod
-//	if(lu.checkResult()){
-//		cout<<"correct "<<endl;
-//	}
 
 	return 0;
 }
