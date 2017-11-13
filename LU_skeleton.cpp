@@ -16,9 +16,7 @@ class LU {
 
 	struct parameter {
 		int i;
-		int j;
 		int k;
-		double stepWidth;
 		double stepHeight;
 	} ;
 
@@ -80,13 +78,13 @@ class LU {
             // fetch arguments
 			struct parameter par = parameters[thread_index];
 
-            cout << "T: " << thread_index << ", K: " << par.k << ", I: " << par.i << ", J: " << par.j << ", W: " << par.stepWidth << ", H: " << par.stepHeight << "\n";
+//            cout << "T: " << thread_index << ", K: " << par.k << ", I: " << par.i  << ", H: " << par.stepHeight << "\n";
 
             // lock thread
             thread_readynnes[thread_index] = false;
 
             for (int i = par.i; i < par.i + par.stepHeight; i++) {
-                for (int j = par.j; j < par.j + par.stepWidth; j++) {
+                for (int j = par.k + 1; j < K; j++) {
                     A[i][j] = A[i][j] - L[i][par.k] * U[par.k][j];
                 }
             }
@@ -153,38 +151,34 @@ class LU {
 			t1.join();
 			t2.join();
 
-			// release barier
+			// reset barier
 			numberOfFinishedThreads = 0;
 
 			// recount A
-			double step = ceil(((A.size() - k) / std::sqrt(worker_count)));
+			double step = ceil((A.size() - k) / (double) worker_count);
             int localThreadIndex = 0;
+            // TODO not blocks, rows
 			for (int i = k + 1; i < K; i += step) {
-				for (int j = k + 1; j < K; j += step) {
+                // předání argumentu vláknu
+                struct parameter par;
+                par.i = i;
+                par.k = k;
+                par.stepHeight = i + step > K ? K - i : step;
 
-                    // předání argumentu vláknu
-					struct parameter par;
-					par.i = i;
-					par.j = j;
-					par.k = k;
-					par.stepWidth = j + step > K ? K - j : step;
-					par.stepHeight = i + step > K ? K - i : step;
+                if (k == 0) {
+                    // spawn thread if needed
+                    thread_readynnes.push_back(true);
+                    parameters.push_back(par);
+                    thread_list.emplace_back(&LU::a_block, this, localThreadIndex);
+                    ++numberOfSpawnedThreads;
+                } else {
+                    // release one thread
+                    parameters[localThreadIndex] = par;
+                    thread_readynnes[localThreadIndex] = true;
+                    ++numberOfSpawnedThreads;
+                }
 
-                    if (k == 0) {
-                        // spawn thread if needed
-                        thread_readynnes.push_back(true);
-						parameters.push_back(par);
-                        thread_list.emplace_back(&LU::a_block, this, localThreadIndex);
-                        ++numberOfSpawnedThreads;
-                    } else {
-                        // release one thread
-                        parameters[localThreadIndex] = par;
-                        thread_readynnes[localThreadIndex] = true;
-                        ++numberOfSpawnedThreads;
-                    }
-
-                    localThreadIndex++;
-				}
+                localThreadIndex++;
 			}
 		}
 
