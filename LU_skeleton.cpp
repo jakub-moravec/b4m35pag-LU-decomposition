@@ -44,9 +44,9 @@ class LU {
         }
     }
 
-    void a_block(int k, int start_row, int start_col, int width, int height) { // work
+    void a_block(int k, int start_row, int height) { // work
         for (int m = start_row; m < start_row + height ; m++) {
-            for (int n = start_col; n < start_col + width ; n++) {
+            for (int n = k + 1; n < A.size(); n++) {
                 A[m][n] = A[m][n] - L[m][k] * U[k][n];
             }
         }
@@ -57,10 +57,9 @@ class LU {
 			high_resolution_clock::time_point start = high_resolution_clock::now();
 
 			// paralel
-            int K = A.size();
 			int worker_count = thread::hardware_concurrency();
 			cout << "Worker count = " << worker_count << endl;
-            for (int k = 0; k < K; k++) {
+            for (int k = 0; k < A.size(); k++) {
                 U[k][k] = A[k][k];
 
                 std::thread t1(&LU::u_row, this, k);
@@ -70,23 +69,14 @@ class LU {
                 t2.join();
 
                 std::vector<std::thread> thread_list;
-                int step = ceil(((A.size() - k) / std::sqrt(worker_count)));
-                for (int a = k + 1; a < K; a += step) {
-                    for (int b = k + 1; b < K; b += step) {
-                        int tmp_width = step;
-                        int tmp_height = step;
-                        if (a + step > K) {
-                            tmp_height = K - a;
-                        }
-                        if (b + step > K) {
-                            tmp_width = K - b;
-                        }
-                        thread_list.emplace_back(&LU::a_block, this, k, a, b, tmp_width, tmp_height);
-                    }
+                int step = static_cast<int>(ceil((A.size() - k) / (double) worker_count));
+                for (int a = k + 1; a < A.size(); a += step) {
+                        int height = static_cast<int>(a + step > A.size() ? A.size() - a : step);
+                        thread_list.emplace_back(&LU::a_block, this, k, a, height);
                 }
 
-                for (int i = 0; i < thread_list.size(); i++) {
-                    thread_list[i].join();
+                for (auto &i : thread_list) {
+                    i.join();
                 }
                 thread_list.clear();
             }
