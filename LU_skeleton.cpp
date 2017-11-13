@@ -21,11 +21,11 @@ class LU {
 	} ;
 
 	atomic<unsigned long> numberOfFinishedThreads{};
+	atomic<unsigned long> barierState{};
 	atomic<bool> programEnd{};
-
 	unsigned long worker_count;
+
 	std::vector<std::thread> thread_list;
-	std::vector<bool> thread_stopped;
 	std::vector<parameter> parameters;
 
 public:
@@ -34,12 +34,12 @@ public:
 
 	explicit LU() {
 		// spawn threads
-		worker_count = thread::hardware_concurrency();
+		worker_count = thread::hardware_concurrency() - 1;
 		numberOfFinishedThreads = worker_count;
+        barierState = 0;
 		programEnd = false;
 
 		for (int i = 0; i < worker_count; ++i) {
-			thread_stopped.push_back(true);
 			struct parameter dummy_par;
 			parameters.push_back(dummy_par);
 			thread_list.emplace_back(&LU::a_block, this, i);
@@ -79,9 +79,11 @@ public:
 	}
 
 	void a_block(int thread_index) {
-		do {
+        unsigned long local_barier_state = barierState.load();
+
+        do {
 			// wait for bariere release
-			while (thread_stopped[thread_index]) {
+			while (barierState == local_barier_state) {
 				// end thread
 				if(programEnd.load()) {
 					return;
@@ -89,13 +91,11 @@ public:
 				this_thread::sleep_for(chrono::milliseconds(1));
 			}
 
+
 			// fetch arguments
 			struct parameter par = parameters[thread_index];
 
 //            cout << "T: " << thread_index << ", K: " << par.k << ", I: " << par.i  << ", H: " << par.stepHeight << "\n";
-
-			// lock thread
-			thread_stopped[thread_index] = true;
 
 			for (int i = par.i; i < par.i + par.stepHeight; i++) {
 				for (int j = par.k + 1; j < K; j++) {
@@ -105,35 +105,11 @@ public:
 
 
 			// increment number of threads fetched by barier
-			numberOfFinishedThreads++;
+            local_barier_state = barierState.load();
+            numberOfFinishedThreads++;
 
 		} while (!programEnd.load());
 	}
-//TODO remove - Pavluv check code
-	bool checkResult(){
-		uint64_t n = A.size();
-		bool correct = true;
-		for (int i = 0; i < n; ++i) {
-			for (int j = 0; j < n; ++j) {
-				double sum = 0;
-				for (int k = 0; k < n; ++k) {
-					sum += L[i][k] * U[k][j];
-				}
-
-				if(!double_equals(sum, AA[i][j])){
-					cout << "Result of L*U [" << i <<", " << j << "] "   << sum << " should be " << AA[i][j] << endl;
-					correct = false;
-				}
-			}
-		}
-		return correct;
-	}
-
-	bool double_equals(double a, double b, double epsilon = 0.001)
-	{
-		return std::fabs(a - b) < epsilon;
-	}
-
 
 	double decompose()	{
 		high_resolution_clock::time_point start = high_resolution_clock::now();
@@ -144,7 +120,9 @@ public:
 
 			// barier->wait()
 			while (numberOfFinishedThreads < worker_count) {
-			}
+                this_thread::sleep_for(chrono::milliseconds(1));
+            }
+            numberOfFinishedThreads = 0;
 
 			U[k][k] = A[k][k];
 
@@ -164,13 +142,20 @@ public:
 				par.k = k;
 				par.stepHeight = i + step > K ? K - i : step;
 				parameters[localThreadIndex] = par;
-
-				// release one thread
-				thread_stopped[localThreadIndex] = false;
-				--numberOfFinishedThreads;
-
 				localThreadIndex++;
 			}
+
+			// dummy params for useless threads
+			for (int i = localThreadIndex; i < worker_count; ++i) {
+				struct parameter dummy_par;
+				dummy_par.i = 0;
+				dummy_par.k = 0;
+				dummy_par.stepHeight = 0;
+				parameters[i++] = dummy_par;
+			}
+
+			// run threads
+            barierState++;
 		}
 
 		// join all threads
@@ -198,6 +183,30 @@ public:
 
 		bout.close();
 	}
+
+    bool checkResult(){
+        uint64_t n = A.size();
+        bool correct = true;
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < n; ++j) {
+                double sum = 0;
+                for (int k = 0; k < n; ++k) {
+                    sum += L[i][k] * U[k][j];
+                }
+
+                if(!double_equals(sum, AA[i][j])){
+                    cout << "Result of L*U [" << i <<", " << j << "] "   << sum << " should be " << AA[i][j] << endl;
+                    correct = false;
+                }
+            }
+        }
+        return correct;
+    }
+
+    bool double_equals(double a, double b, double epsilon = 0.001)
+    {
+        return std::fabs(a - b) < epsilon;
+    }
 
 private:
 
@@ -250,10 +259,10 @@ int main(int argc, char* argv[])	{
 		lu.writeResults(outputFile);
 
 	cout<<"computational time: "<<totalDuration<<" s"<<endl;
-	//TODO remove - Pavluv kod
-	if(lu.checkResult()){
-		cout<<"correct "<<endl;
-	}
+	//remove for prod
+//	if(lu.checkResult()){
+//		cout<<"correct "<<endl;
+//	}
 
 	return 0;
 }
