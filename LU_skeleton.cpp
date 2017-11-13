@@ -21,12 +21,11 @@ class LU {
 	} ;
 
 	atomic<unsigned long> numberOfFinishedThreads{};
-	atomic<unsigned long> numberOfSpawnedThreads{};
+	atomic<int> runThread{};
     atomic<bool> programEnd{};
 
-	int worker_count;
+    unsigned long worker_count;
 	std::vector<std::thread> thread_list;
-    std::vector<bool> thread_readynnes;
 	std::vector<parameter> parameters;
 
 	public:
@@ -35,10 +34,16 @@ class LU {
 
 		explicit LU() {
 			// spawn threads
-			worker_count = thread::hardware_concurrency() - 1;
+			worker_count = thread::hardware_concurrency();
             numberOfFinishedThreads = worker_count;
-            numberOfSpawnedThreads = 0;
+            runThread = -1;
             programEnd = false;
+
+            for (int i = 0; i < worker_count; ++i) {
+                struct parameter dummy_par;
+                parameters.push_back(dummy_par);
+                thread_list.emplace_back(&LU::a_block, this, i);
+            }
 		}
 
 		// It reads a matrix from the binary file.
@@ -75,13 +80,19 @@ class LU {
 
     void a_block(int thread_index) {
         do {
+            // wait for bariere release
+            while (thread_index > runThread) {
+                // end thread
+                if(programEnd.load()) {
+                    return;
+                }
+                this_thread::sleep_for(chrono::milliseconds(1));
+            }
+
             // fetch arguments
 			struct parameter par = parameters[thread_index];
 
 //            cout << "T: " << thread_index << ", K: " << par.k << ", I: " << par.i  << ", H: " << par.stepHeight << "\n";
-
-            // lock thread
-            thread_readynnes[thread_index] = false;
 
             for (int i = par.i; i < par.i + par.stepHeight; i++) {
                 for (int j = par.k + 1; j < K; j++) {
@@ -92,15 +103,6 @@ class LU {
 
             // increment number of threads fetched by barier
             numberOfFinishedThreads++;
-
-            // wait for bariere release
-            while (!thread_readynnes[thread_index]) {
-                // end thread
-                if(programEnd.load()) {
-                    return;
-                }
-                this_thread::sleep_for(chrono::milliseconds(1));
-            }
 
         } while (!programEnd.load());
 	}
@@ -116,7 +118,7 @@ class LU {
 				}
 
 				if(!double_equals(sum, AA[i][j])){
-//					cout << "Result of L*U [" << i <<", " << j << "] "   << sum << " should be " << AA[i][j] << endl;
+					cout << "Result of L*U [" << i <<", " << j << "] "   << sum << " should be " << AA[i][j] << endl;
 					correct = false;
 				}
 			}
@@ -138,10 +140,9 @@ class LU {
 		for (int k = 0; k < K; k++) {
 
 			// barier->wait()
-			while (numberOfFinishedThreads.load() < numberOfSpawnedThreads.load()) {
-				this_thread::sleep_for(chrono::milliseconds(1)); // wait
-                numberOfSpawnedThreads = 0;
-			}
+            while (numberOfFinishedThreads < worker_count) {
+                this_thread::sleep_for(chrono::milliseconds(1));
+            }
 
 			U[k][k] = A[k][k];
 
@@ -151,36 +152,25 @@ class LU {
 			t1.join();
 			t2.join();
 
-			// reset barier
-			numberOfFinishedThreads = 0;
-
-			// recount A
+            // recount A
 			double step = ceil((A.size() - k) / (double) worker_count);
             int localThreadIndex = 0;
-            // TODO not blocks, rows
-			for (int i = k + 1; i < K; i += step) {
+            for (int i = k + 1; i < K; i += step) {
                 // předání argumentu vláknu
                 struct parameter par;
                 par.i = i;
                 par.k = k;
                 par.stepHeight = i + step > K ? K - i : step;
+                parameters[localThreadIndex] = par;
 
-                if (k == 0) {
-                    // spawn thread if needed
-                    thread_readynnes.push_back(true);
-                    parameters.push_back(par);
-                    thread_list.emplace_back(&LU::a_block, this, localThreadIndex);
-                    ++numberOfSpawnedThreads;
-                } else {
-                    // release one thread
-                    parameters[localThreadIndex] = par;
-                    thread_readynnes[localThreadIndex] = true;
-                    ++numberOfSpawnedThreads;
-                }
+                // release one thread
+                ++runThread;
+                --numberOfFinishedThreads;
 
                 localThreadIndex++;
 			}
-		}
+            runThread = -1;
+        }
 
         // join all threads
         programEnd = true;
