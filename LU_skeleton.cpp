@@ -31,15 +31,15 @@ class LU {
 			bin.close();
 		}
 
-    void u_row(int length, int k, int chunk) { // work
-        for (int j = k + 1; j < length; j++) {
+    void u_row(int k) {
+        for (int j = k + 1; j < A.size(); j++) {
             U[k][j] = A[k][j];
         }
     }
 
-    void l_col(int length, int k, int chunk) { // work
+    void l_col(int k) {
         L[k][k] = 1;
-        for (int i = k + 1; i < length; i++) {
+        for (int i = k + 1; i < A.size(); i++) {
             L[i][k] = A[i][k] / U[k][k];
         }
     }
@@ -55,24 +55,7 @@ class LU {
 
     double decompose()	{
 			high_resolution_clock::time_point start = high_resolution_clock::now();
-			// TODO: Implement a parallel LU decomposition...
-//            for(int k = 0; k < A.size(); ++k) {
-//
-//                for (int j = k; j < A.size(); ++j) {
-//                    U[k][j] = A[k][j];
-//                }
-//                L[k][k] = 1;
-//
-//                for (int i = k + 1; i < A.size(); ++i) {
-//                    L[i][k] = A[i][k] / U[k][k];
-//                }
-//
-//                for (int j = k + 1; j < A.size(); ++j) {
-//                    for (int i = k +1; i < A.size(); ++i) {
-//                        A[i][j] -= L[i][k] * U[k][j];
-//                    }
-//                }
-//			}
+
 			// paralel
             int K = A.size();
 			int worker_count = thread::hardware_concurrency();
@@ -80,8 +63,8 @@ class LU {
             for (int k = 0; k < K; k++) {
                 U[k][k] = A[k][k];
 
-                std::thread t1(&LU::u_row, this, K, k, 0);
-                std::thread t2(&LU::l_col, this, K, k, 0);
+                std::thread t1(&LU::u_row, this, k);
+                std::thread t2(&LU::l_col, this, k);
 
                 t1.join();
                 t2.join();
@@ -98,7 +81,7 @@ class LU {
                         if (b + step > K) {
                             tmp_width = K - b;
                         }
-                        thread_list.push_back(std::thread(&LU::a_block, this, k, a, b, tmp_width, tmp_height));
+                        thread_list.emplace_back(&LU::a_block, this, k, a, b, tmp_width, tmp_height);
                     }
                 }
 
@@ -106,7 +89,6 @@ class LU {
                     thread_list[i].join();
                 }
                 thread_list.clear();
-
             }
 
 
