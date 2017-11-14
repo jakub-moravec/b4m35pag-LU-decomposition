@@ -31,23 +31,23 @@ class LU {
 			bin.close();
 		}
 
-    void u_row(int k, int start, int chunk) {
-        for (int j = start; j < start + chunk; j++) {
+    void u_row(int k) {
+        for (int j = k+1; j <  A.size(); j++) {
             U[j][k] = A[k][j];
         }
     }
 
-    void l_col(int k, int start, int chunk) {
+    void l_col(int k) {
         L[k][k] = 1;
-        for (int i = start; i < start + chunk; i++) {
+        for (int i = k+1; i < A.size(); i++) {
             L[i][k] = A[i][k] / U[k][k];
         }
     }
 
     void a_block(int k, int start_row, int height) {
-        for (int m = start_row; m < start_row + height ; m++) {
-            for (int n = k + 1; n < A.size(); n++) {
-                A[m][n] = A[m][n] - L[m][k] * U[n][k];
+        for (int i = start_row; i < start_row + height ; i++) {
+            for (int j = k + 1; j < A.size(); j++) {
+                A[i][j] = A[i][j] - L[i][k] * U[j][k];
             }
         }
     }
@@ -60,7 +60,7 @@ class LU {
         std::vector<std::thread> thread_list;
 
         // paralel
-        int worker_count = 4;
+        int worker_count = 8;
         cout << "Threads = " << worker_count << endl;
 
         for (int k = 0; k < K; k++) {
@@ -75,11 +75,8 @@ class LU {
             // LU
             U[k][k] = A[k][k];
             int lu_step = step * 2;
-            for (int i = k + 1; i < K; i += lu_step) {
-                int chunk = i + lu_step > K ? K - i : lu_step;
-                thread_list.emplace_back(&LU::u_row, this, k, i, chunk);
-                thread_list.emplace_back(&LU::l_col, this, k, i, chunk);
-            }
+            thread_list.emplace_back(&LU::u_row, this, k);
+            thread_list.emplace_back(&LU::l_col, this, k);
 
             for (auto &t : thread_list) {
                 t.join();
