@@ -31,76 +31,98 @@ class LU {
 			bin.close();
 		}
 
-    void u_row(int k) {
-        for (int j = k + 1; j < A.size(); j++) {
-            U[k][j] = A[k][j];
+    void u_row(int k, int start, int chunk) {
+        for (int j = start; j < start + chunk; j++) {
+            U[j][k] = A[k][j];
         }
     }
 
-    void l_col(int k) {
+    void l_col(int k, int start, int chunk) {
         L[k][k] = 1;
-        for (int i = k + 1; i < A.size(); i++) {
+        for (int i = start; i < start + chunk; i++) {
             L[i][k] = A[i][k] / U[k][k];
         }
     }
 
-    void a_block(int k, int start_row, int height) { // work
+    void a_block(int k, int start_row, int height) {
         for (int m = start_row; m < start_row + height ; m++) {
             for (int n = k + 1; n < A.size(); n++) {
-                A[m][n] = A[m][n] - L[m][k] * U[k][n];
+                A[m][n] = A[m][n] - L[m][k] * U[n][k];
             }
         }
     }
 
 
     double decompose()	{
-			high_resolution_clock::time_point start = high_resolution_clock::now();
+        high_resolution_clock::time_point start = high_resolution_clock::now();
 
-			// paralel
-			int worker_count = thread::hardware_concurrency();
-			cout << "Worker count = " << worker_count << endl;
-            for (int k = 0; k < A.size(); k++) {
-                U[k][k] = A[k][k];
+        int K = (int) A.size();
+        std::vector<std::thread> thread_list;
 
-                std::thread t1(&LU::u_row, this, k);
-                std::thread t2(&LU::l_col, this, k);
+        // paralel
+        int worker_count = 4;
+        cout << "Threads = " << worker_count << endl;
 
-                t1.join();
-                t2.join();
+        for (int k = 0; k < K; k++) {
 
-                std::vector<std::thread> thread_list;
-                int step = static_cast<int>(ceil((A.size() - k) / (double) worker_count));
-                for (int a = k + 1; a < A.size(); a += step) {
-                        int height = static_cast<int>(a + step > A.size() ? A.size() - a : step);
-                        thread_list.emplace_back(&LU::a_block, this, k, a, height);
-                }
+            int step = (int) ceil((K - k) / (double) worker_count);
 
-                for (auto &i : thread_list) {
-                    i.join();
-                }
-                thread_list.clear();
+            for (auto &t : thread_list) {
+                t.join();
+            }
+            thread_list.clear();
+
+            // LU
+            U[k][k] = A[k][k];
+            int lu_step = step * 2;
+            for (int i = k + 1; i < K; i += lu_step) {
+                int chunk = i + lu_step > K ? K - i : lu_step;
+                thread_list.emplace_back(&LU::u_row, this, k, i, chunk);
+                thread_list.emplace_back(&LU::l_col, this, k, i, chunk);
             }
 
+            for (auto &t : thread_list) {
+                t.join();
+            }
+            thread_list.clear();
 
-			double runtime = duration_cast<duration<double>>(high_resolution_clock::now()-start).count();
+            // A
+            for (int i = k + 1; i < K; i += step) {
+                int height =i + step > K ? K - i : step;
+                thread_list.emplace_back(&LU::a_block, this, k, i, height);
+            }
+        }
 
-			return runtime;
-		}
+        for (auto &t : thread_list) {
+            t.join();
+        }
+        thread_list.clear();
 
-		void writeResults(const string& outputFile)	{
-			ofstream bout(outputFile.c_str(), ofstream::out | ofstream::binary | ofstream::trunc);
-			if (bout)	{
-				uint64_t n = A.size();
-				for (uint64_t r = 0; r < n; ++r)
-					bout.write((char*) L[r].data(), n*sizeof(double));
-				for (uint64_t r = 0; r < n; ++r)
-					bout.write((char*) U[r].data(), n*sizeof(double));
-			} else {
-				throw invalid_argument("Cannot open the input file!");
-			}
 
-			bout.close();
-		}
+        double runtime = duration_cast<duration<double>>(high_resolution_clock::now()-start).count();
+
+        return runtime;
+    }
+
+        void writeResults(const string& outputFile)	{
+            ofstream bout(outputFile.c_str(), ofstream::out | ofstream::binary | ofstream::trunc);
+            if (bout)	{
+                uint64_t n = A.size();
+                for (uint64_t r = 0; r < n; ++r)
+                    bout.write((char*) L[r].data(), n*sizeof(double));
+                for (uint64_t r = 0; r < n; ++r) {
+                    std::vector<double> column(n);
+                    for (uint64_t q = 0; q < n; ++q) {
+                        column[q] = U[q][r];
+                    }
+                    bout.write((char *) column.data(), n * sizeof(double));
+                }
+            } else {
+                throw invalid_argument("Cannot open the input file!");
+            }
+
+            bout.close();
+        }
 		
 	private:
 
