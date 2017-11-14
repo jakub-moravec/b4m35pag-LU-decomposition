@@ -6,6 +6,8 @@
 #include <string>
 #include <functional>
 #include <vector>
+#include <thread>
+#include <cmath>
 
 using namespace std;
 using namespace std::chrono;
@@ -29,47 +31,96 @@ class LU {
 			bin.close();
 		}
 
-		double decompose()	{
-			high_resolution_clock::time_point start = high_resolution_clock::now();
-			// TODO: Implement a parallel LU decomposition...
-            for(int k = 0; k < A.size(); ++k) {
-                    
-                for (int j = k; j < A.size(); ++j) {
-                    U[k][j] = A[k][j];
-                }
-                L[k][k] = 1;
+    void u_row(int k) {
+        for (int j = k+1; j <  A.size(); j++) {
+            U[k][j] = A[k][j];
+        }
+    }
 
-                for (int i = k + 1; i < A.size(); ++i) {
-                    L[i][k] = A[i][k] / U[k][k];
-                }
+    void l_col(int k) {
+        L[k][k] = 1;
+        for (int i = k+1; i < A.size(); i++) {
+            L[k][i] = A[i][k] / U[k][k];
+        }
+    }
 
-                for (int j = k + 1; j < A.size(); ++j) {
-                    for (int i = k +1; i < A.size(); ++i) {
-                        A[i][j] -= L[i][k] * U[k][j];
+    void a_block(int k, int start_row, int height) {
+        for (int i = start_row; i < start_row + height ; i++) {
+            for (int j = k + 1; j < A.size(); j++) {
+                A[i][j] = A[i][j] - L[k][i] * U[k][j];
+            }
+        }
+    }
+
+
+    double decompose()	{
+        high_resolution_clock::time_point start = high_resolution_clock::now();
+
+        int K = (int) A.size();
+        std::vector<std::thread> thread_list;
+
+        // paralel
+        int worker_count = 8;
+        cout << "Threads = " << worker_count << endl;
+
+        for (int k = 0; k < K; k++) {
+
+            int step = (int) ceil((K - k) / (double) worker_count);
+
+            for (auto &t : thread_list) {
+                t.join();
+            }
+            thread_list.clear();
+
+            // LU
+            U[k][k] = A[k][k];
+            int lu_step = step * 2;
+            thread_list.emplace_back(&LU::u_row, this, k);
+            thread_list.emplace_back(&LU::l_col, this, k);
+
+            for (auto &t : thread_list) {
+                t.join();
+            }
+            thread_list.clear();
+
+            // A
+            for (int i = k + 1; i < K; i += step) {
+                int height =i + step > K ? K - i : step;
+                thread_list.emplace_back(&LU::a_block, this, k, i, height);
+            }
+        }
+
+        for (auto &t : thread_list) {
+            t.join();
+        }
+        thread_list.clear();
+
+
+        double runtime = duration_cast<duration<double>>(high_resolution_clock::now()-start).count();
+
+        return runtime;
+    }
+
+        void writeResults(const string& outputFile)	{
+            ofstream bout(outputFile.c_str(), ofstream::out | ofstream::binary | ofstream::trunc);
+            if (bout)	{
+                uint64_t n = A.size();
+                for (uint64_t r = 0; r < n; ++r) {
+                    std::vector<double> column(n);
+                    for (uint64_t q = 0; q < n; ++q) {
+                        column[q] = L[q][r];
                     }
+                    bout.write((char *) column.data(), n * sizeof(double));
                 }
-                
-			}
+                for (uint64_t r = 0; r < n; ++r)
+                    bout.write((char*) U[r].data(), n*sizeof(double));
 
-			double runtime = duration_cast<duration<double>>(high_resolution_clock::now()-start).count();
+            } else {
+                throw invalid_argument("Cannot open the input file!");
+            }
 
-			return runtime;
-		}
-
-		void writeResults(const string& outputFile)	{
-			ofstream bout(outputFile.c_str(), ofstream::out | ofstream::binary | ofstream::trunc);
-			if (bout)	{
-				uint64_t n = A.size();
-				for (uint64_t r = 0; r < n; ++r)
-					bout.write((char*) L[r].data(), n*sizeof(double));
-				for (uint64_t r = 0; r < n; ++r)
-					bout.write((char*) U[r].data(), n*sizeof(double));
-			} else {
-				throw invalid_argument("Cannot open the input file!");
-			}
-
-			bout.close();
-		}
+            bout.close();
+        }
 		
 	private:
 

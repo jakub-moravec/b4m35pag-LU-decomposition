@@ -4,6 +4,8 @@ project(lu_hw1)
 #Bring the headers, such as Student.h into the project
 include_directories(include)
 
+find_package(Threads)
+
 set(CMAKE_CXX_STANDARD 11)
 
 #Can manually add the sources using the set command as follows:
@@ -13,3 +15,5 @@ set(CMAKE_CXX_STANDARD 11)
 file(GLOB SOURCES "*.cpp")
 
 add_executable(lu ${SOURCES})
+
+target_link_libraries(lu ${CMAKE_THREAD_LIBS_INIT})
