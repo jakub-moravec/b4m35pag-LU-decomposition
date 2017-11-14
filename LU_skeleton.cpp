@@ -33,21 +33,21 @@ class LU {
 
     void u_row(int k) {
         for (int j = k+1; j <  A.size(); j++) {
-            U[j][k] = A[k][j];
+            U[k][j] = A[k][j];
         }
     }
 
     void l_col(int k) {
         L[k][k] = 1;
         for (int i = k+1; i < A.size(); i++) {
-            L[i][k] = A[i][k] / U[k][k];
+            L[k][i] = A[i][k] / U[k][k];
         }
     }
 
     void a_block(int k, int start_row, int height) {
         for (int i = start_row; i < start_row + height ; i++) {
             for (int j = k + 1; j < A.size(); j++) {
-                A[i][j] = A[i][j] - L[i][k] * U[j][k];
+                A[i][j] = A[i][j] - L[k][i] * U[k][j];
             }
         }
     }
@@ -105,15 +105,16 @@ class LU {
             ofstream bout(outputFile.c_str(), ofstream::out | ofstream::binary | ofstream::trunc);
             if (bout)	{
                 uint64_t n = A.size();
-                for (uint64_t r = 0; r < n; ++r)
-                    bout.write((char*) L[r].data(), n*sizeof(double));
                 for (uint64_t r = 0; r < n; ++r) {
                     std::vector<double> column(n);
                     for (uint64_t q = 0; q < n; ++q) {
-                        column[q] = U[q][r];
+                        column[q] = L[q][r];
                     }
                     bout.write((char *) column.data(), n * sizeof(double));
                 }
+                for (uint64_t r = 0; r < n; ++r)
+                    bout.write((char*) U[r].data(), n*sizeof(double));
+
             } else {
                 throw invalid_argument("Cannot open the input file!");
             }
